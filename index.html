@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Preview Player</title>
+<style>
+  :root{
+    --bg:#ffffff; --panel:#f6f8fb; --line:#e3e7ee; --text:#14171f; --muted:#667085; --accent:#2f6bff;
+  }
+  *{box-sizing:border-box;margin:0}
+  body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:24px 20px 0}
+  main{width:100%;max-width:1100px;flex:1}
+  h1{font-size:1.3rem;font-weight:600;margin-bottom:14px}
+
+  /* Upload area */
+  #drop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-height:340px;border:2px dashed #cdd4e1;border-radius:12px;background:var(--panel);cursor:pointer;text-align:center;padding:24px;transition:border-color .15s,background .15s}
+  #drop.over,#drop:hover{border-color:var(--accent);background:#eef3ff}
+  #drop svg{width:44px;height:44px;stroke:var(--accent)}
+  #drop p{color:var(--muted);font-size:.95rem;max-width:520px}
+  #drop strong{font-size:1.05rem}
+  #file{display:none}
+
+  /* Player */
+  #player{display:flex;flex-direction:column;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 4px 18px rgba(20,23,31,.08);user-select:none}
+  #player.full{border-radius:0;border:0;width:100%;height:100%}
+  .stage{position:relative;background:#000;aspect-ratio:16/9;border-radius:12px 12px 0 0;overflow:hidden}
+  #player.full .stage{flex:1;aspect-ratio:auto;border-radius:0}
+  #video{width:100%;height:100%;display:block;background:#000;object-fit:contain}
+  .hidden{display:none!important}
+  .hidden-video{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+
+  .controls{position:relative;z-index:2;padding:6px 14px 10px;background:#fff;border-radius:0 0 12px 12px}
+  #player.full .controls{border-radius:0}
+
+  /* Seek bar */
+  .bar-wrap{position:relative;height:22px;display:flex;align-items:center;cursor:pointer;touch-action:none}
+  .bar{position:relative;width:100%;height:4px;border-radius:4px;background:#dde2ec;transition:height .12s}
+  .bar-wrap:hover .bar,.bar-wrap.drag .bar{height:7px}
+  .fill{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--accent);border-radius:4px}
+  .ghost{position:absolute;left:0;top:0;bottom:0;width:0;background:rgba(47,107,255,.25);border-radius:4px}
+  .knob{position:absolute;top:50%;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;background:var(--accent);border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);left:0;transform:scale(0);transition:transform .12s}
+  .bar-wrap:hover .knob,.bar-wrap.drag .knob{transform:scale(1)}
+
+  /* Thumbnail bubble */
+  .preview{position:absolute;bottom:30px;left:0;transform:translateX(-50%);display:none;flex-direction:column;align-items:center;gap:6px;pointer-events:none}
+  .preview.show{display:flex}
+  .preview canvas{display:block;border:3px solid #fff;border-radius:8px;background:#111;box-shadow:0 6px 22px rgba(0,0,0,.35)}
+  .preview span{font-size:.8rem;font-variant-numeric:tabular-nums;background:#14171f;color:#fff;padding:2px 8px;border-radius:4px}
+
+  .row{display:flex;align-items:center;gap:6px;margin-top:2px}
+  .row .sp{flex:1}
+  button{background:none;border:0;color:var(--text);width:40px;height:40px;border-radius:8px;display:grid;place-items:center;cursor:pointer}
+  button:hover{background:#eef1f6}
+  button:focus-visible,.bar-wrap:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  button svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .time{font-size:.85rem;font-variant-numeric:tabular-nums;color:var(--muted);margin-left:6px;white-space:nowrap}
+  input[type=range]{width:80px;accent-color:var(--accent)}
+
+  .center-flash{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none}
+  .center-flash div{background:rgba(255,255,255,.92);color:var(--text);padding:10px 18px;border-radius:30px;font-size:1rem;opacity:0;transition:opacity .2s}
+  .center-flash div.on{opacity:1}
+
+  .hint{margin-top:14px;color:var(--muted);font-size:.85rem}
+
+  /* Footer */
+  footer{width:100%;max-width:1100px;margin-top:36px;padding:18px 0 22px;border-top:1px solid var(--line);text-align:center}
+  footer p{color:var(--muted);font-size:.85rem;line-height:1.5;max-width:640px;margin:0 auto 8px}
+  footer .by{display:inline-flex;align-items:center;gap:8px;font-size:.9rem;font-weight:600;color:var(--text)}
+  footer .by svg{width:18px;height:18px;fill:none;stroke:var(--accent);stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+  @media(max-width:600px){input[type=range]{display:none}.time{font-size:.75rem}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Preview Player</h1>
+
+  <label id="drop" for="file">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+    <strong>Choose a video or drop it here</strong>
+    <p>MP4, WebM, MOV and other formats your browser can play. Nothing is uploaded; the file stays on your device.</p>
+  </label>
+  <input id="file" type="file" accept="video/*">
+
+  <div id="player" class="hidden">
+    <div class="stage">
+      <video id="video" playsinline></video>
+      <!-- hidden helper videos used only to grab thumbnail frames -->
+      <video id="scrubV" class="hidden-video" muted preload="auto" playsinline></video>
+      <video id="bgV" class="hidden-video" muted preload="auto" playsinline></video>
+      <div class="center-flash"><div id="flash"></div></div>
+    </div>
+
+    <div class="controls" id="controls">
+      <div class="bar-wrap" id="barWrap" tabindex="0" role="slider" aria-label="Seek">
+        <div class="preview" id="preview">
+          <canvas id="thumb"></canvas>
+          <span id="thumbTime">0:00</span>
+        </div>
+        <div class="bar" id="bar">
+          <div class="ghost" id="ghost"></div>
+          <div class="fill" id="fill"></div>
+          <div class="knob" id="knob"></div>
+        </div>
+      </div>
+
+      <div class="row">
+        <button id="playBtn" aria-label="Play / Pause"></button>
+        <button id="backBtn" aria-label="Back 10 seconds"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><text x="8" y="16" font-size="7" stroke="none" fill="currentColor" font-family="sans-serif">10</text></svg></button>
+        <button id="fwdBtn" aria-label="Forward 10 seconds"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/><text x="8" y="16" font-size="7" stroke="none" fill="currentColor" font-family="sans-serif">10</text></svg></button>
+        <button id="muteBtn" aria-label="Mute"></button>
+        <input id="vol" type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume">
+        <span class="time" id="timeLabel">0:00 / 0:00</span>
+        <span class="sp"></span>
+        <button id="newBtn" aria-label="Open another video"><svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg></button>
+        <button id="fsBtn" aria-label="Fullscreen"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+      </div>
+    </div>
+  </div>
+
+  <p class="hint">Hover or drag along the progress bar to see thumbnails. Keys: Space play/pause, ← → seek 5s, J / L seek 10s, M mute, F fullscreen.</p>
+</main>
+
+<footer>
+  <p>Preview Player is a browser-based video player with Netflix and JioHotstar style thumbnail previews. Move or drag along the progress bar to see the exact frame before you jump. Your video is processed on your device and never uploaded.</p>
+  <div class="by">
+    <svg viewBox="0 0 24 24"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
+    Developed By Mohan
+  </div>
+</footer>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const video = $('video'), scrubV = $('scrubV'), bgV = $('bgV');
+  const player = $('player'), drop = $('drop'), fileInput = $('file');
+  const barWrap = $('barWrap'), bar = $('bar'), fill = $('fill'), ghost = $('ghost'), knob = $('knob');
+  const preview = $('preview'), thumb = $('thumb'), thumbTime = $('thumbTime'), tctx = thumb.getContext('2d');
+  const playBtn = $('playBtn'), muteBtn = $('muteBtn'), vol = $('vol'), timeLabel = $('timeLabel'), flash = $('flash');
+
+  const ICON = {
+    play: '<svg viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z" fill="currentColor"/></svg>',
+    pause: '<svg viewBox="0 0 24 24"><path d="M8 4v16M16 4v16" stroke-width="3"/></svg>',
+    vol: '<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/></svg>',
+    mute: '<svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 9l5 6M22 9l-5 6"/></svg>'
+  };
+  playBtn.innerHTML = ICON.play; muteBtn.innerHTML = ICON.vol;
+
+  const TW = 200;               // thumbnail width in px
+  let TH = 112;                 // thumbnail height (set from video aspect ratio)
+  let url = null, duration = 0;
+  let cache = [], cacheCount = 0, cacheStep = 1, genId = 0;
+  let dragging = false, hovering = false, previewTimer = null;
+
+  const fmt = s => {
+    s = Math.max(0, Math.floor(s || 0));
+    const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+    return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(sec).padStart(2, '0');
+  };
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+  /* ---------- Load a video ---------- */
+  function loadFile(file) {
+    if (!file || !file.type.startsWith('video/')) return;
+    if (url) URL.revokeObjectURL(url);
+    url = URL.createObjectURL(file);
+    genId++; cache = []; duration = 0;
+    video.src = scrubV.src = bgV.src = url;
+    drop.classList.add('hidden'); player.classList.remove('hidden');
+    video.play().catch(() => {});
+  }
+  fileInput.addEventListener('change', e => loadFile(e.target.files[0]));
+  ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+  drop.addEventListener('drop', e => loadFile(e.dataTransfer.files[0]));
+  $('newBtn').onclick = () => { video.pause(); fileInput.value = ''; fileInput.click(); };
+
+  video.addEventListener('loadedmetadata', () => {
+    duration = video.duration;
+    TH = Math.round(TW * (video.videoHeight / video.videoWidth)) || 112;
+    thumb.width = TW; thumb.height = TH;
+    buildCache();
+  });
+
+  /* ---------- Thumbnail cache (background generation) ---------- */
+  function seekTo(v, t) {
+    return new Promise(res => {
+      let done = false;
+      const finish = () => { if (done) return; done = true; v.removeEventListener('seeked', finish); res(); };
+      v.addEventListener('seeked', finish);
+      setTimeout(finish, 2000); // safety net if the browser never fires 'seeked'
+      v.currentTime = t;
+    });
+  }
+
+  async function buildCache() {
+    const id = ++genId;
+    cacheCount = clamp(Math.round(duration / 4), 20, 150);
+    cacheStep = duration / cacheCount;
+    cache = new Array(cacheCount);
+    await new Promise(r => bgV.readyState >= 1 ? r() : bgV.addEventListener('loadedmetadata', r, { once: true }));
+    for (let i = 0; i < cacheCount; i++) {
+      if (id !== genId) return;
+      await seekTo(bgV, Math.min(duration - 0.05, i * cacheStep + cacheStep / 2));
+      if (id !== genId) return;
+      const c = document.createElement('canvas');
+      c.width = TW; c.height = TH;
+      c.getContext('2d').drawImage(bgV, 0, 0, TW, TH);
+      cache[i] = c;
+    }
+  }
+
+  function nearestCached(t) {
+    if (!cacheCount) return null;
+    const idx = clamp(Math.floor(t / cacheStep), 0, cacheCount - 1);
+    for (let d = 0; d < cacheCount; d++) {
+      if (cache[idx - d]) return cache[idx - d];
+      if (cache[idx + d]) return cache[idx + d];
+    }
+    return null;
+  }
+
+  /* ---------- Exact frame for the hovered time ---------- */
+  let want = 0, busy = false, lastDrawn = -1;
+  async function exactFrame(t) {
+    want = t;
+    if (busy) return;
+    busy = true;
+    while (lastDrawn !== want) {
+      const target = want;
+      await seekTo(scrubV, target);
+      lastDrawn = target;
+      if (hovering || dragging) tctx.drawImage(scrubV, 0, 0, TW, TH);
+    }
+    busy = false;
+  }
+
+  /* ---------- Preview bubble ---------- */
+  function showPreview(t) {
+    const w = barWrap.clientWidth;
+    const x = clamp((t / duration) * w, TW / 2 + 4, w - TW / 2 - 4);
+    preview.style.left = x + 'px';
+    thumbTime.textContent = fmt(t);
+    preview.classList.add('show');
+    const c = nearestCached(t);
+    if (c) tctx.drawImage(c, 0, 0, TW, TH);   // instant (approximate) frame
+    exactFrame(t);                              // then swap in the exact frame
+  }
+  const hidePreview = () => preview.classList.remove('show');
+
+  function timeFromEvent(e) {
+    const r = bar.getBoundingClientRect();
+    return clamp((e.clientX - r.left) / r.width, 0, 1) * duration;
+  }
+  function setVisual(t) {
+    const p = duration ? (t / duration) * 100 : 0;
+    fill.style.width = p + '%'; knob.style.left = p + '%';
+  }
+
+  barWrap.addEventListener('pointerenter', () => { hovering = true; });
+  barWrap.addEventListener('pointerleave', () => {
+    hovering = false; ghost.style.width = '0';
+    if (!dragging) hidePreview();
+  });
+  barWrap.addEventListener('pointermove', e => {
+    if (!duration) return;
+    const t = timeFromEvent(e);
+    ghost.style.width = (t / duration) * 100 + '%';
+    if (dragging) setVisual(t);
+    showPreview(t);
+  });
+  barWrap.addEventListener('pointerdown', e => {
+    if (!duration) return;
+    dragging = true; barWrap.classList.add('drag');
+    barWrap.setPointerCapture(e.pointerId);
+    const t = timeFromEvent(e);
+    setVisual(t); showPreview(t);
+  });
+  barWrap.addEventListener('pointerup', e => {
+    if (!dragging) return;
+    dragging = false; barWrap.classList.remove('drag');
+    video.currentTime = timeFromEvent(e);
+    if (!hovering) hidePreview();
+  });
+  barWrap.addEventListener('pointercancel', () => { dragging = false; barWrap.classList.remove('drag'); hidePreview(); });
+
+  /* ---------- Skip with buttons / keys: show thumbnail of the target time ---------- */
+  function skip(sec) {
+    if (!duration) return;
+    const t = clamp(video.currentTime + sec, 0, duration);
+    video.currentTime = t;
+    setVisual(t);
+    flashMsg((sec > 0 ? '+' : '') + sec + 's');
+    showPreview(t);
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(() => { if (!hovering && !dragging) hidePreview(); }, 900);
+  }
+  $('backBtn').onclick = () => skip(-10);
+  $('fwdBtn').onclick = () => skip(10);
+
+  /* ---------- Playback controls ---------- */
+  const toggle = () => video.paused ? video.play() : video.pause();
+  playBtn.onclick = toggle;
+  video.addEventListener('click', toggle);
+  video.addEventListener('dblclick', toggleFull);
+  video.addEventListener('play', () => { playBtn.innerHTML = ICON.pause; });
+  video.addEventListener('pause', () => { playBtn.innerHTML = ICON.play; });
+  muteBtn.onclick = () => { video.muted = !video.muted; syncVol(); };
+  vol.oninput = () => { video.volume = vol.value; video.muted = false; syncVol(); };
+  function syncVol() {
+    muteBtn.innerHTML = (video.muted || video.volume === 0) ? ICON.mute : ICON.vol;
+    vol.value = video.muted ? 0 : video.volume;
+  }
+
+  function tick() {
+    if (duration && !dragging) {
+      setVisual(video.currentTime);
+      timeLabel.textContent = fmt(video.currentTime) + ' / ' + fmt(duration);
+    }
+    requestAnimationFrame(tick);
+  }
+  tick();
+
+  function toggleFull() {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else player.requestFullscreen && player.requestFullscreen();
+  }
+  $('fsBtn').onclick = toggleFull;
+  document.addEventListener('fullscreenchange', () => player.classList.toggle('full', !!document.fullscreenElement));
+
+  let flashTimer;
+  function flashMsg(msg) {
+    flash.textContent = msg; flash.classList.add('on');
+    clearTimeout(flashTimer); flashTimer = setTimeout(() => flash.classList.remove('on'), 600);
+  }
+
+  /* ---------- Keyboard ---------- */
+  document.addEventListener('keydown', e => {
+    if (player.classList.contains('hidden') || e.target === vol) return;
+    const k = e.key.toLowerCase();
+    if (k === ' ' || k === 'k') { e.preventDefault(); toggle(); }
+    else if (k === 'arrowleft') { e.preventDefault(); skip(-5); }
+    else if (k === 'arrowright') { e.preventDefault(); skip(5); }
+    else if (k === 'j') skip(-10);
+    else if (k === 'l') skip(10);
+    else if (k === 'm') { video.muted = !video.muted; syncVol(); }
+    else if (k === 'f') toggleFull();
+  });
+})();
+</script>
+</body>
+</html>
